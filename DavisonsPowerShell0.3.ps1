@@ -32,7 +32,7 @@ param(
     
     [bool]$diag = $false, #$true/$false set to false when using a test user.
     [array]$paths = @("OU=Users,OU=Davisons,DC=davisons,DC=law","OU=Accounts,OU=Data,DC=davisons,DC=law"), #OUs to sync, comma delimited
-    [string]$newUserPath = "OU=_NewJoiner,OU=Users,DC=davisons,DC=law", #OU to create new records in / only used if allowCreation is True
+    [string]$newUserPath = "OU=_NewJoiner,OU=Users,OU=Davisons,DC=davisons,DC=law", #OU to create new records in / only used if allowCreation is True
     
     # Feature Execution Switches (Client Phase Rollout Controllers)
     [bool]$allowCreation = $true,       # Set to $true to process and create new starters in AD
