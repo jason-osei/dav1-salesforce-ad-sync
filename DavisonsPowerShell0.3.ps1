@@ -313,53 +313,44 @@ WriteToLog "Script started"
 
 try {
     WriteToLog "Authenticating with Salesforce"
-    $session = Invoke-RestMethod -Uri $salesforceUrl + "/services/oauth2/token" -Method Post -body @{
-        "content-type"="application/x-www-form-urlencoded"
-        "grant_type"="client_credentials"
-        "client_id"=$client
-        "client_secret"=$secret
-    }
+    $sfLoginUrl = $salesforceUrl.TrimEnd('/') + "/services/oauth2/token"
+
+    $session = Invoke-RestMethod -Uri $sfLoginUrl `
+        -Method Post `
+        -Headers @{ "Content-Type" = "application/x-www-form-urlencoded" } `
+        -Body "grant_type=client_credentials&client_id=$client&client_secret=$secret" `
+        -ErrorAction Stop
 }
 catch {
-    if ($PSVersionTable.PSEdition -eq "Core") {
-        $messageDetails = $_.ErrorDetails.Message | ConvertFrom-Json
-    }
-    else {
+    try {
         $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-        $reader.BaseStream.Position = 0
-        $reader.DiscardBufferedData()
-        $messageDetails = $reader.ReadToEnd() | ConvertFrom-Json
+        $authError = $reader.ReadToEnd()
+        WriteToLog ("Error when trying to authenticate with Sage`n" + $authError)
+    }
+    catch {
+        WriteToLog ("Error when trying to authenticate with Sage`n" + ($_ | Out-String))
     }
 
-    if ($messageDetails.error -eq "invalid_grant") {
-        $message = "Sages Credentials are invalid, please check username and password"
-        WriteToLog ($message + "`n" + ($_ | Out-String))
-        WriteToLog "Script finished"
-        break
-    }
-    else {
-        $message = "Unknown error when trying to authenticate with sage"
-        WriteToLog ($message + "`n" + ($_ | Out-String))
-        WriteToLog "Script finished"
-        break
-    }
+    WriteToLog "Script finished"
+    break
 }
 
 $records = @()
-$url = "/services/data/v58.0/query/?q=$query"
+$encodedQuery = [System.Web.HttpUtility]::UrlEncode($query)
+$url = "$($session.instance_url)/services/data/v58.0/query?q=$encodedQuery"
 
 do {
     try{
-        $response = Invoke-RestMethod ($session.instance_url + $url) -Headers @{ Authorization = "$($session.token_type) $($session.access_token)" } -ErrorAction Stop
+        $response = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "$($session.token_type) $($session.access_token)" } -ErrorAction Stop
+        $records += $response.records
+        $url = if ($response.nextRecordsUrl) { "$($session.instance_url)$($response.nextRecordsUrl)" } else { $null }
     }
     catch{
         WriteToLog ("Error when trying to fetch users from Sage`n" + ($_ | Out-String))
         WriteToLog "Script finished"
         return
     }
-    $url = $response.nextRecordsUrl
-    $records += $response.records
-} while ($response.done -ne $true)
+} while ($url -and $response.done -ne $true)
 
 WriteToLog ("A total of " + $records.count + " records fetched from Sage")
 
