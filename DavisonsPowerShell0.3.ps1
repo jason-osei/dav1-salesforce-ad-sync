@@ -30,7 +30,7 @@ param(
     [string]$transcriptPath = $(if ($IsWindows) { "C:\scripts\HRSync\logs\transcript" } else { "$HOME/Downloads/HRSync/logs/transcript" }),
     [string]$logPath = $(if ($IsWindows) { "C:\scripts\HRSync\logs" } else { "$HOME/Downloads/HRSync/logs" }),
     
-    [bool]$diag = $true, #$true/$false set to false when using a test user.
+    [bool]$diag = $false, #$true/$false set to false when using a test user.
     [array]$paths = @("OU=Users,OU=Davisons,DC=davisons,DC=law","OU=Accounts,OU=Data,DC=davisons,DC=law"), #OUs to sync, comma delimited
     [string]$newUserPath = "OU=_NewJoiner,OU=Users,DC=davisons,DC=law", #OU to create new records in / only used if allowCreation is True
     
@@ -702,9 +702,9 @@ if($allowCreation){
 
                 # Define the alphabet for the password
                 $alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
-                #Generate a random 20-character string
+                # Generate a random 20-character string
                 $randomPassword = -join ((1..20) | ForEach-Object { $alphabet[(Get-Random -Maximum $alphabet.Length)] })
-                # Add it to your userprops hash
+                $securePassword = ConvertTo-SecureString -AsPlainText $randomPassword -Force
 
                 $sageUser = $allUsersSage[$key]
                 $newManager = $null
@@ -714,7 +714,6 @@ if($allowCreation){
                 $userprops.Add("surname",$surname)
                 $userprops.Add("displayName",$firstName + " " + $surname)
                 $userprops.Add("Path",$path)
-                $userprops.Add("accountPassword", (ConvertTo-SecureString -AsPlainText $randomPassword -Force))           
 
                 foreach($prop in $SagefieldToADField.Keys){
                     if($userprops.ContainsKey($prop)){
@@ -764,6 +763,7 @@ if($allowCreation){
                     WriteToLog "Skipping user creation of $($name)"
                     continue
                 }
+
                 $userprops.Add("samaccountname",$sam)
                 $userprops.Add("userprincipalname",$UPN)
                 $userprops.Add("EmailAddress",$UPN)
@@ -771,7 +771,19 @@ if($allowCreation){
                 if(!$diag){
                     try{
                         New-ADUser @userprops -ErrorAction Stop
-                        $message = "Successfully created AD user $($userprops.name)`n" + ($userprops | Out-String)
+
+                        Set-ADAccountPassword -Identity $sam `
+                            -NewPassword $securePassword `
+                            -Reset `
+                            -ErrorAction Stop
+
+                        # Optional: enable after password is set
+                        Enable-ADAccount -Identity $sam -ErrorAction Stop
+
+                        $userpropsForLog = $userprops.Clone()
+                        $userpropsForLog["GeneratedPassword"] = $randomPassword
+
+                        $message = "Successfully created AD user $($userprops.name)`n" + ($userpropsForLog | Out-String)
                         $usersCreated += $userProps
                         WriteToLog $message
                     }
@@ -781,8 +793,10 @@ if($allowCreation){
                     }
                 }
                 else{
+                    $userpropsForLog = $userprops.Clone()
+                    $userpropsForLog["GeneratedPassword"] = $randomPassword
                     $usersCreated += $userProps
-                    WriteToLog ("Will create user $($userprops.name)`n" + ($userprops | out-string))
+                    WriteToLog ("Will create user $($userprops.name)`n" + ($userpropsForLog | out-string))
                 }
             }
         }
