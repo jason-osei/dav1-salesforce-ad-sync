@@ -30,8 +30,8 @@ param(
     [string]$logPath = $(if ($IsWindows) { "C:\scripts\HRSync\logs" } else { "$HOME/Downloads/HRSync/logs" }),
     
     [bool]$diag = $true, #$true/$false set to false when using a test user.
-    [array]$paths = @("OU=Users,OU=HMS,DC=hms,DC=se","OU=Accounts,OU=Data,DC=hms,DC=se","OU=Location,OU=Z-ADMT - HQ to HMS Migrations,DC=hms,DC=se"), #OUs to sync, comma delimited
-    [string]$newUserPath = "OU=_NewJoiner,OU=Users,OU=HMS,DC=hms,DC=se", #OU to create new records in / only used if allowCreation is True
+    [array]$paths = @("OU=Users,OU=Davisons,DC=davisons,DC=law","OU=Accounts,OU=Data,DC=davisons,DC=law"), #OUs to sync, comma delimited
+    [string]$newUserPath = "OU=_NewJoiner,OU=Users,DC=davisons,DC=law", #OU to create new records in / only used if allowCreation is True
     
     # Feature Execution Switches (Client Phase Rollout Controllers)
     [bool]$allowCreation = $true,       # Set to $true to process and create new starters in AD
