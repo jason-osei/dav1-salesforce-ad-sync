@@ -23,8 +23,8 @@
 # Parameters
 param(
 
-    [string]$client = "",
-    [string]$secret = "",
+    [string]$client = "3MVG9WktJx3rjNu2vZrWMhn5uva5Rtmdrh94JcWuZzd_vIzxfaduYN32UZ62tf8S4YYoVYE4BEfBTc2ueqaL2",
+    [string]$secret = "C9D43889FA069F1C75EFCC7D3CE66444BAD7A2FCEF57939E69A432EBAEC89F90",
 
     [string]$transcriptPath = $(if ($IsWindows) { "C:\scripts\HRSync\logs\transcript" } else { "$HOME/Downloads/HRSync/logs/transcript" }),
     [string]$logPath = $(if ($IsWindows) { "C:\scripts\HRSync\logs" } else { "$HOME/Downloads/HRSync/logs" }),
