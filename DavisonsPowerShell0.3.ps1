@@ -313,13 +313,19 @@ WriteToLog "Script started"
 
 try {
     WriteToLog "Authenticating with Salesforce"
-    $sfLoginUrl = $salesforceUrl.TrimEnd('/') + "/services/oauth2/token"
-
     $session = Invoke-RestMethod -Uri $sfLoginUrl `
         -Method Post `
         -Headers @{ "Content-Type" = "application/x-www-form-urlencoded" } `
-        -Body "grant_type=client_credentials&client_id=$client&client_secret=$secret" `
-        -ErrorAction Stop
+        -Body "grant_type=client_credentials&client_id=$client&client_secret=$secret"
+
+    WriteToLog "Authenticated. Instance: $($session.instance_url)" -ForegroundColor Green
+
+    WriteToLog ("Session summary:`n" + (@{
+        instance_url = $session.instance_url
+        token_type   = $session.token_type
+        issued_at    = $session.issued_at
+        signature    = $session.signature
+    } | ConvertTo-Json -Depth 5))
 }
 catch {
     try {
