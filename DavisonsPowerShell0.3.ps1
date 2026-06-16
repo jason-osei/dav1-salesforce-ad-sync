@@ -23,6 +23,7 @@
 # Parameters
 param(
 
+    [string]$salesforceUrl = "https://davisonslaw.my.salesforce.com",
     [string]$client = "3MVG9WktJx3rjNu2vZrWMhn5uva5Rtmdrh94JcWuZzd_vIzxfaduYN32UZ62tf8S4YYoVYE4BEfBTc2ueqaL2",
     [string]$secret = "C9D43889FA069F1C75EFCC7D3CE66444BAD7A2FCEF57939E69A432EBAEC89F90",
 
@@ -71,6 +72,9 @@ param(
     $smtpPort          = "587",
     $smtpUseSSL        = $true
 )
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor
+[Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
 
 $workLocationAPIField = "fHCM2__Current_Employment__r.fHCM2__Work_Location__r.Name"
 
@@ -309,7 +313,7 @@ WriteToLog "Script started"
 
 try {
     WriteToLog "Authenticating with Salesforce"
-    $session = Invoke-RestMethod -Uri "https://davisonslaw.my.salesforce.com/services/oauth2/token" -Method Post -body @{
+    $session = Invoke-RestMethod -Uri $salesforceUrl + "/services/oauth2/token" -Method Post -body @{
         "content-type"="application/x-www-form-urlencoded"
         "grant_type"="client_credentials"
         "client_id"=$client
@@ -905,7 +909,7 @@ Function UpdateWorkEmailInSage($userId, $emailValue, $fedIdValue){
             Authorization  = "$($session.token_type) $($session.access_token)";
             "Content-Type" = "application/json"
         }
-        Invoke-RestMethod ($session.instance_url + $url) -Headers $headers -Body $body -Method Patch -ErrorAction Stop
+        Invoke-RestMethod ($salesforceUrl + $url) -Headers $headers -Body $body -Method Patch -ErrorAction Stop
         WriteToLog "Updated Sage ID $($userId): Email to '$emailValue', FedID to '$fedIdValue'"
     }
     catch {
