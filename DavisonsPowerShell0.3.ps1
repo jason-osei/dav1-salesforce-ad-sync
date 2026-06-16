@@ -104,30 +104,7 @@ Function WriteToLog($message){
     $message | Out-File $logName -Force -Append
 }
 
-if ($IsWindows) {
-    Import-Module ActiveDirectory
-} else {
-    Write-Host "Running on non-Windows OS. Skipping ActiveDirectory module import." -ForegroundColor Yellow
-    
-    # Mocking all necessary AD functions to prevent hangs
-    function Get-ADUser { 
-        [CmdletBinding()]
-        param([Parameter(ValueFromPipelineByPropertyName=$true)]$Identity, $Filter) 
-        return $null # Returns null, telling the script the user doesn't exist yet
-    }
-    function Set-ADUser { 
-        param($Identity) 
-        Write-Host "Mock Set-ADUser executed for $Identity" 
-    }
-    function New-ADUser { 
-        param([Parameter(ValueFromPipelineByPropertyName=$true)]$SamAccountName, $name) 
-        Write-Host "Mock New-ADUser created: $name" 
-    }
-    function Disable-ADAccount { 
-        param($Identity) 
-        Write-Host "Mock Disable-ADAccount executed for $Identity" 
-    }
-}
+Import-Module ActiveDirectory
 
 #set the script root
 if ($psise) {
@@ -444,69 +421,35 @@ $remainingUsersSage = $allUsersSage.Clone()
 
 # --- Fetch or Mock AD Users ---
 $allUsersAD = @()
-
-if (!$IsWindows) {
-    WriteToLog "Non-Windows OS detected. Generating a mock AD user record for visual preview..."
-    
-    $mockKey = if ($testUser) { $testUser } else { ($allUsersSage.Keys | Select-Object -First 1) }
-    
-    if ($mockKey -and $allUsersSage.ContainsKey($mockKey)) {
-        $sampleSageUser = $allUsersSage[$mockKey]
-        
-        # Bypass conditional state criteria to trigger the mockup matrix output loop
-        $sampleSageUser.fHCM2__Employment_Status__c = "Active"
-        
-        $mockADUser = [PSCustomObject]@{
-            SamAccountName        = "preview.user"
-            Name                  = "$($sampleSageUser.fHCM2__First_Name__c) $($sampleSageUser.fHCM2__Surname__c)"
-            DistinguishedName     = "CN=Preview User,OU=Users,DC=yourdomain,DC=com"
-            Enabled               = $true
-            EmployeeID            = $mockKey
-            Office                = "Old Office Location (AD)"
-            surname               = "Old Surname (AD)"
-            displayName           = "Old DisplayName (AD)"
-            manager               = "CN=Old Manager,OU=Users,DC=yourdomain,DC=com"
-            extensionAttribute2   = "False"
-            extensionAttribute3   = "Old Division"
-            cn                    = "Old CN"
+try {
+    if($paths.count -eq 0){
+        if($testUser){
+            $allUsersAD = @(Get-ADUser -Filter "$($uniqueValueADandSage[0]) -eq '$testUser'" -Properties * -ErrorAction Stop)
         }
-        $allUsersAD += $mockADUser
-        WriteToLog "Mock AD User created successfully for Key ID: $mockKey (Forced Status: Active)"
-    } else {
-        WriteToLog "Warning: No Sage records available to create a mock preview user from."
+        else{
+            $allUsersAD = Get-ADUser -Filter * -Properties * -ErrorAction Stop | where $uniqueValueADandSage[0] -ne $null
+        }
     }
-}
-else {
-    try {
-        if($paths.count -eq 0){
-            if($testUser){
-                $allUsersAD = @(Get-ADUser -Filter "$($uniqueValueADandSage[0]) -eq '$testUser'" -Properties * -ErrorAction Stop)
-            }
-            else{
-                $allUsersAD = Get-ADUser -Filter * -Properties * -ErrorAction Stop | where $uniqueValueADandSage[0] -ne $null
+    else{
+        if($testUser){
+            foreach($path in $paths){
+                $allUsersAD += @(Get-ADUser -Filter "$($uniqueValueADandSage[0]) -eq '$testUser'" -Properties * -SearchBase $path -ErrorAction Stop)
             }
         }
         else{
-            if($testUser){
                 foreach($path in $paths){
-                    $allUsersAD += @(Get-ADUser -Filter "$($uniqueValueADandSage[0]) -eq '$testUser'" -Properties * -SearchBase $path -ErrorAction Stop)
-                }
-            }
-            else{
-                 foreach($path in $paths){
-                    $allUsersAD += Get-ADUser -Filter * -SearchBase $path -Properties * -ErrorAction Stop | where $uniqueValueADandSage[0] -ne $null
-                }
+                $allUsersAD += Get-ADUser -Filter * -SearchBase $path -Properties * -ErrorAction Stop | where $uniqueValueADandSage[0] -ne $null
             }
         }
-        WriteToLog ("A total of " + $allUsersAD.count + " records fetched from AD")
     }
-    catch {
-        $message = "Error when trying to fetch users from AD`n" + ($_ | Out-String)
-        WriteToLog $message
-        WriteToLog "Script finished"
-        SendErrorMail $message
-        break;
-    }
+    WriteToLog ("A total of " + $allUsersAD.count + " records fetched from AD")
+}
+catch {
+    $message = "Error when trying to fetch users from AD`n" + ($_ | Out-String)
+    WriteToLog $message
+    WriteToLog "Script finished"
+    SendErrorMail $message
+    break;
 }
 
 $allUsersADHash = @{}
