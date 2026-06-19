@@ -638,10 +638,28 @@ if($allowCreation){
     foreach($key in $allUsersSage.Keys){
 
         if($allUsersADHash.ContainsKey($key)){continue} # Skip if user already exists
-        if($createUsersWithTheseEmploymentStatuses.Contains($allUsersSage.$key.fHCM2__Employment_Status__c)){
+            if($createUsersWithTheseEmploymentStatuses.Contains($allUsersSage.$key.fHCM2__Employment_Status__c)){
+
+            # For Pre-Joiners, only process if their start date is within 7 days from today
+            if($allUsersSage.$key.fHCM2__Employment_Status__c -eq "Pre Joiner"){
+                $startDateRaw = $allUsersSage.$key.fHCM2__Current_Employment__r.fHCM2__Start_Date__c
+                if([string]::IsNullOrEmpty($startDateRaw)){
+                    WriteToLog "Skipping Pre-Joiner $($allUsersSage.$key.fHCM2__First_Name__c) $($allUsersSage.$key.fHCM2__Surname__c) - no start date set."
+                    continue
+                }
+                $startDate = [datetime]::Parse($startDateRaw)
+                $daysUntilStart = ($startDate.Date - (Get-Date).Date).Days
+                if($daysUntilStart -ge 7){
+                    WriteToLog "Skipping Pre-Joiner $($allUsersSage.$key.fHCM2__First_Name__c) $($allUsersSage.$key.fHCM2__Surname__c) - start date $($startDate.ToString('yyyy-MM-dd')) is $daysUntilStart day(s) away (threshold: less than 7 days)."
+                    continue
+                }
+                WriteToLog "Processing Pre-Joiner $($allUsersSage.$key.fHCM2__First_Name__c) $($allUsersSage.$key.fHCM2__Surname__c) - start date $($startDate.ToString('yyyy-MM-dd')) is $daysUntilStart day(s) away."
+            }
+
             $userprops = @{}
             $path = $newUserPath
             if($path){
+
 
                 # Define the alphabet for the password
                 $alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
