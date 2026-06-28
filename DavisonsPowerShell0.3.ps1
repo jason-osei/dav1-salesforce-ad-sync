@@ -54,9 +54,10 @@ param(
     [array]$uniqueValueADandSage = @("employeeId","fHCM2__Unique_Id__c"),
     [string]$testUser = $null,
     [array]$SagefieldToADField = @{
-        "Office"  = "fHCM2__Current_Employment__r.fHCM2__Work_Location__r.fHCM2__Address_City__c"
-        "surname" = "fHCM2__Surname__c"
-        "company" = "fHCM2__Current_Employment__r.fHCM2__Business_Name__c"
+        "Office"          = "fHCM2__Current_Employment__r.fHCM2__Work_Location__r.Name"
+        "surname"         = "fHCM2__Surname__c"
+        "company"         = "fHCM2__Current_Employment__r.fHCM2__Business_Name__c"
+        "telephoneNumber" = "fHCM2__Phone_Number__c"
     },
 
     [bool]$SyncEmailFromADToSage = $false,
@@ -203,6 +204,7 @@ $queryValues = @(
     "fHCM2__Surname__c"
     "fHCM2__Preferred_Name__c"
     "fHCM2__Email__c"
+    "fHCM2__Phone_Number__c"
     "fHCM2__Unique_Id__c"
     "fHCM2__Job_Title__c"
     "fHCM2__Division__c"
