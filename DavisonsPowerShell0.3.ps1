@@ -17,7 +17,6 @@
 #	5. The paths (Organisational Unit and Domain Controllers) for users in AD are set.
 #   6. The $uniqueValueADandSage array must have a unique field in both AD and Sage.
 #
-#     
 #############################################################################################################################
 
 # Parameters
@@ -30,45 +29,43 @@ param(
     [string]$transcriptPath = $(if ($IsWindows) { "C:\scripts\HRSync\logs\transcript" } else { "$HOME/Downloads/HRSync/logs/transcript" }),
     [string]$logPath = $(if ($IsWindows) { "C:\scripts\HRSync\logs" } else { "$HOME/Downloads/HRSync/logs" }),
     
-    [bool]$diag = $false, #$true/$false set to false when using a test user.
-    [array]$paths = @("OU=Users,OU=Davisons,DC=davisons,DC=law","OU=Accounts,OU=Data,DC=davisons,DC=law"), #OUs to sync, comma delimited
-    [string]$newUserPath = "OU=_NewJoiner,OU=Users,OU=Davisons,DC=davisons,DC=law", #OU to create new records in / only used if allowCreation is True
+    [bool]$diag = $false,
+    [array]$paths = @("OU=Users,OU=Davisons,DC=davisons,DC=law","OU=Accounts,OU=Data,DC=davisons,DC=law"),
+    [string]$newUserPath = "OU=_NewJoiner,OU=Users,OU=Davisons,DC=davisons,DC=law",
     
-    # Feature Execution Switches (Client Phase Rollout Controllers)
-    [bool]$allowCreation = $true,       # Set to $true to process and create new starters in AD
-    [bool]$allowUpdate = $false,         # Set to $false to block updates to existing matching AD accounts
-    [bool]$allowDeactivation = $false,   # Set to $false to block changing leaving employees to disabled
+    [bool]$allowCreation = $true,
+    [bool]$allowUpdate = $false,
+    [bool]$allowDeactivation = $false,
     
     [array]$createUsersWithTheseEmploymentStatuses = @(
-		"Pre Joiner"
-	),
+        "Pre Joiner"
+    ),
     [array]$updateUsersWithTheseEmploymentStatuses = @(
-		"Active",
-		"Active Employee",
-		"Pre-Joiner"
-	),
-	[bool]$disableUsersWhenLeft = $true, # Main toggle left intact for structural fallback
-	[array]$disableUsersWithTheseEmploymentStatuses = @(
-		"Leaver",
-		"Left"
-	),
+        "Active",
+        "Active Employee",
+        "Pre-Joiner"
+    ),
+    [bool]$disableUsersWhenLeft = $true,
+    [array]$disableUsersWithTheseEmploymentStatuses = @(
+        "Leaver",
+        "Left"
+    ),
 
-    [array]$uniqueValueADandSage = @("employeeId","fHCM2__Unique_Id__c"), #First AD value, second Sage value
-    [string]$testUser = $null, #Test user identifier
-    [array]$SagefieldToADField = @{ #Map AD values to Sage fields, these are the only fields which will be synced to AD
-        "Office"="fHCM2__Current_Employment__r.fHCM2__Work_Location__r.fHCM2__Address_City__c"
+    [array]$uniqueValueADandSage = @("employeeId","fHCM2__Unique_Id__c"),
+    [string]$testUser = $null,
+    [array]$SagefieldToADField = @{
+        "Office"  = "fHCM2__Current_Employment__r.fHCM2__Work_Location__r.fHCM2__Address_City__c"
         "surname" = "fHCM2__Surname__c"
-        "company" = "fHCM2__Current_Employment__r.fHCM2__Business_Name__c" 
+        "company" = "fHCM2__Current_Employment__r.fHCM2__Business_Name__c"
     },
 
-    [bool]$SyncEmailFromADToSage = $false, #Syncs the mail of the AD users to Work_Email_Address_Holding_Field__c
+    [bool]$SyncEmailFromADToSage = $false,
     $syncManagerFromSage = $true,
 
-    #Mail Settings
     $shouldMailOnError = $true,
-    $smtpFrom          = "hris-sync@davisons.law", 
-    $smtpTo            = "support@davisons.law",  
-    $smtpServer        = "smtp.davisons.law",    
+    $smtpFrom          = "hris-sync@davisons.law",
+    $smtpTo            = "support@davisons.law",
+    $smtpServer        = "smtp.davisons.law",
     $smtpPort          = "587",
     $smtpUseSSL        = $true
 )
@@ -76,16 +73,20 @@ param(
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor
 [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
 
+$sfLoginUrl = "$salesforceUrl/services/oauth2/token"
 $workLocationAPIField = "fHCM2__Current_Employment__r.fHCM2__Work_Location__r.Name"
 
-# Map the Sage Business Name to the correct Active Directory Domain Suffix
 $domainMappingHash = @{
-    "Davisons Law"             = "@davisons.law"
-    "DP Law"                   = "@dplaw.law"
-    "Default"                  = "@davisons.law" 
+    "Davisons Law" = "@davisons.law"
+    "DP Law"       = "@dplaw.law"
+    "Default"      = "@davisons.law"
 }
 
-# String replacement mapping dictionary for specialized characters
+$allowedEmailDomains = @(
+    "davisons.law",
+    "dplaw.law"
+)
+
 $characterReplaceHash = @{
     "å" = "a"; "ä" = "a"; "ö" = "o"; "é" = "e"; "è" = "e"; "ü" = "u"; "ï" = "i"
 }
@@ -100,13 +101,80 @@ Function WriteToLog($message){
         $message = (Get-Date -format "yyyyMMdd HH:ss") + " - " + $message
     }
     
-    write-host $message
+    Write-Host $message
     $message | Out-File $logName -Force -Append
+}
+
+Function GetEmailDomainFromSageValue($emailValue) {
+    if ([string]::IsNullOrWhiteSpace($emailValue)) {
+        return $null
+    }
+
+    $normalizedEmail = $emailValue.ToLower().Trim()
+
+    if ($normalizedEmail -match '@') {
+        $candidateDomain = ($normalizedEmail.Split('@')[-1]).Trim()
+    }
+    elseif ($normalizedEmail -match '(davisons\.law|dplaw\.law)$') {
+        $candidateDomain = $matches[1]
+    }
+    else {
+        $candidateDomain = $null
+    }
+
+    if ($candidateDomain -and ($allowedEmailDomains -contains $candidateDomain)) {
+        return "@" + $candidateDomain
+    }
+
+    return $null
+}
+
+Function GetSafeOUName($name) {
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        return "Davisons Law"
+    }
+
+    $safeName = $name.Trim()
+    $safeName = $safeName -replace '[\\\/\+\=\<\>\#\;\,\"]', '-'
+    $safeName = $safeName -replace '\s+', ' '
+    $safeName = $safeName.Trim()
+
+    if ([string]::IsNullOrWhiteSpace($safeName)) {
+        return "Davisons Law"
+    }
+
+    return $safeName
+}
+
+Function EnsureOUExists($ouName, $parentPath) {
+    $safeOUName = GetSafeOUName $ouName
+    $ouDn = "OU=$safeOUName,$parentPath"
+
+    try {
+        $existingOU = Get-ADOrganizationalUnit -Identity $ouDn -ErrorAction Stop
+        WriteToLog "OU already exists: $ouDn"
+        return $ouDn
+    }
+    catch {
+        if($diag){
+            WriteToLog "Would create OU: $ouDn"
+            return $ouDn
+        }
+
+        try {
+            New-ADOrganizationalUnit -Name $safeOUName -Path $parentPath -ProtectedFromAccidentalDeletion $false -ErrorAction Stop | Out-Null
+            WriteToLog "Created OU: $ouDn"
+            return $ouDn
+        }
+        catch {
+            WriteToLog "Failed to create OU: $ouDn. Error: $($_.Exception.Message)"
+            return $null
+        }
+    }
 }
 
 Import-Module ActiveDirectory
 
-#set the script root
 if ($psise) {
     $scriptRoot = Split-Path $psise.CurrentFile.FullPath
 }
@@ -114,12 +182,11 @@ else {
     $scriptRoot = $global:PSScriptRoot
 }
 
-#Change values to LDAP names so they work with null values
 $clearReplacementList = @{
-    "state"="st"
-    "city"="l"
-    "Country"="C"
-    "Office"="physicalDeliveryOfficeName"
+    "state"   = "st"
+    "city"    = "l"
+    "Country" = "C"
+    "Office"  = "physicalDeliveryOfficeName"
 }
 
 [array]$allSageValues = @()
@@ -130,6 +197,7 @@ $allSageValues += $uniqueValueADandSage[1]
 
 $queryValues = @(
     "id"
+    "fHCM2__Hire_Date__c"
     "fHCM2__First_Name__c"
     "fHCM2__Middle_Name__c"
     "fHCM2__Surname__c"
@@ -142,6 +210,7 @@ $queryValues = @(
     "fHCM2__Manager__r.fHCM2__Unique_Id__c"
     "fHCM2__Current_Employment__r.Name"
     "fHCM2__Country__c"
+    "fHCM2__Current_Employment__r.fHCM2__Start_Date__c"
     "fHCM2__Is_Manager__c"
     "fHCM2__Current_Employment__r.fHCM2__Business_Name__c"
 )
@@ -156,12 +225,13 @@ $allSageValues += $workLocationAPIField
 $allSageValues = $allSageValues | Sort-Object -Unique
 
 $query = "SELECT " + ($allSageValues -join ",") + " FROM fHCM2__Team_Member__c WHERE fHCM2__Unique_Id__c != null"
+
 if(!(Test-Path $transcriptPath)){
-    new-item -ItemType Directory -Path $transcriptPath | Out-Null
+    New-Item -ItemType Directory -Path $transcriptPath | Out-Null
 }
 
 if(!(Test-Path $logPath)){
-    new-item -ItemType Directory -Path $logPath | Out-Null
+    New-Item -ItemType Directory -Path $logPath | Out-Null
 }
 
 $transcriptname = $transcriptPath + "\Transcript " + (Get-Date).ToString().Replace(":","-").Replace("/","-") + ".log"
@@ -188,9 +258,6 @@ Function SendErrorMail($specificError = $null){
 
                 $smtp = New-Object System.Net.Mail.SmtpClient($smtpServer, $smtpPort)
                 $smtp.EnableSsl = $smtpUseSSL
-                
-                # If mail infrastructure requires authentication, uncomment below:
-                # $smtp.Credentials = New-Object System.Net.NetworkCredential($smtpUsername, $smtpPassword)
 
                 $smtp.Send($mail)
                 $smtp.Dispose()
@@ -209,14 +276,13 @@ Function GetAvailablesAMAccountName($givenName, $surname){
         $surname = $surname.Replace($key,($characterReplaceHash.$key))
     }
     
-    # Format Rule: First Initial + Surname Prefix (e.g., slee)
     $firstInitial = $givenName[0]
     $name = ($firstInitial + $surname)[0..19] -join ""
     $counter = 1
     
     while($counter -le 20){
         try{
-            if(!(get-aduser -filter {sAMAccountName -eq $name} -ErrorAction Stop)){
+            if(!(Get-ADUser -Filter {sAMAccountName -eq $name} -ErrorAction Stop)){
                 return $name.ToLower()
             }
         }
@@ -238,14 +304,13 @@ Function GetAvailableUPN($givenName, $surname, $targetDomain){
     
     if (!$targetDomain) { $targetDomain = $domainMappingHash["Default"] }
 
-    # Format Rule: First Initial + Surname Suffix (e.g., slee@davisons.law)
     $firstInitial = $givenName[0]
     $name = ($firstInitial + $surname) + $targetDomain
 
     $counter = 1
     while($counter -le 20){
         try{
-            if(!(get-aduser -filter {userprincipalname -eq $name} -ErrorAction Stop)){
+            if(!(Get-ADUser -Filter {userprincipalname -eq $name} -ErrorAction Stop)){
                 return $name.ToLower()
             }
         }
@@ -261,7 +326,7 @@ Function GetAvailableUPN($givenName, $surname, $targetDomain){
 
 Function TurnADuserIntoHash($aduser){
     $userhash = @{}
-    $adUser | Get-Member -MemberType property | select -ExpandProperty name | ForEach-Object {
+    $adUser | Get-Member -MemberType property | Select-Object -ExpandProperty name | ForEach-Object {
         $userhash[$_] = $adUser.$_
     }
     return $userhash
@@ -295,7 +360,7 @@ try {
         -Headers @{ "Content-Type" = "application/x-www-form-urlencoded" } `
         -Body "grant_type=client_credentials&client_id=$client&client_secret=$secret"
 
-    WriteToLog "Authenticated. Instance: $($session.instance_url)" -ForegroundColor Green
+    WriteToLog "Authenticated. Instance: $($session.instance_url)"
 
     WriteToLog ("Session summary:`n" + (@{
         instance_url = $session.instance_url
@@ -337,7 +402,6 @@ do {
 
 WriteToLog ("A total of " + $records.count + " records fetched from Sage")
 
-# Process and log Employment Status Breakdown metrics
 $statusCounts = @{}
 $totalCount = 0
 foreach ($record in $records) {
@@ -347,15 +411,12 @@ foreach ($record in $records) {
     $totalCount++
 }
 
-# Build the string for the log file
 $breakdownString = "Employment Status Breakdown:`n"
 foreach ($statusKey in $statusCounts.Keys | Sort-Object) {
-    # Using ${statusKey} ensures the colon is treated as literal text
     $breakdownString += " - ${statusKey}: $($statusCounts[$statusKey])`n"
 }
 $breakdownString += "Total Records: $totalCount"
 WriteToLog $breakdownString
-
 
 $allUsersSage = @{}
 $allUsersSageIdToUnique = @{}
@@ -369,30 +430,29 @@ foreach($sageField in $SagefieldToADField.Values){
 
 foreach($record in $records){
     if($record.($uniqueValueADandSage[1])){
-            if($record.fHCM2__Surname__c -ne $null -and $record.fHCM2__Surname__c -ne ""){
-                $record.fHCM2__Surname__c = $record.fHCM2__Surname__c
-            }
-            if($record.Preferred_Name_or_First_Name__c -ne $null -and $record.Preferred_Name_or_First_Name__c -ne ""){
-                $record.fHCM2__First_Name__c = $record.Preferred_Name_or_First_Name__c
-            }
+        if($record.fHCM2__Surname__c -ne $null -and $record.fHCM2__Surname__c -ne ""){
+            $record.fHCM2__Surname__c = $record.fHCM2__Surname__c
+        }
+        if($record.Preferred_Name_or_First_Name__c -ne $null -and $record.Preferred_Name_or_First_Name__c -ne ""){
+            $record.fHCM2__First_Name__c = $record.Preferred_Name_or_First_Name__c
+        }
 
-            foreach($sageField in $SagefieldToADField.Values){
-                if($sageField.Contains(".")){
-                    $splitValue = $sageField.Split(".")
-                    $valueToSet = $record.$($splitValue[0])
-                    for($i = 1; $i -lt $splitValue.Count; $i++){
-                        $valueToSet = $valueToSet.($splitValue[$i])
-                    }
-                    $record.$sageField = $valueToSet
+        foreach($sageField in $SagefieldToADField.Values){
+            if($sageField.Contains(".")){
+                $splitValue = $sageField.Split(".")
+                $valueToSet = $record.$($splitValue[0])
+                for($i = 1; $i -lt $splitValue.Count; $i++){
+                    $valueToSet = $valueToSet.($splitValue[$i])
                 }
+                $record.$sageField = $valueToSet
             }
+        }
 
-            # Extract the nested business entity field to clean up validation mapping rules
-            $record | Add-Member -MemberType NoteProperty -Name "BusinessName" -Value $record.fHCM2__Current_Employment__r.fHCM2__Business_Name__c -Force
+        $record | Add-Member -MemberType NoteProperty -Name "BusinessName" -Value $record.fHCM2__Current_Employment__r.fHCM2__Business_Name__c -Force
 
-            $allUsersSage[$record.($uniqueValueADandSage[1])] = $record
-            $allUsersSageIdToUnique[$record.id] = $record.($uniqueValueADandSage[1])
-            $allUsersSageForManager[$record.($uniqueValueADandSage[1])] = $record
+        $allUsersSage[$record.($uniqueValueADandSage[1])] = $record
+        $allUsersSageIdToUnique[$record.id] = $record.($uniqueValueADandSage[1])
+        $allUsersSageForManager[$record.($uniqueValueADandSage[1])] = $record
     }
 }
 
@@ -404,7 +464,7 @@ if($testUser){
     else{
         WriteToLog "The test user either does not exist or is an inactive account in sage"
         WriteToLog "Script finished"
-        return;
+        return
     }
 }
 else{
@@ -419,7 +479,6 @@ foreach($record in $records){
 
 $remainingUsersSage = $allUsersSage.Clone()
 
-# --- Fetch or Mock AD Users ---
 $allUsersAD = @()
 try {
     if($paths.count -eq 0){
@@ -427,7 +486,7 @@ try {
             $allUsersAD = @(Get-ADUser -Filter "$($uniqueValueADandSage[0]) -eq '$testUser'" -Properties * -ErrorAction Stop)
         }
         else{
-            $allUsersAD = Get-ADUser -Filter * -Properties * -ErrorAction Stop | where $uniqueValueADandSage[0] -ne $null
+            $allUsersAD = Get-ADUser -Filter * -Properties * -ErrorAction Stop | Where-Object { $_.($uniqueValueADandSage[0]) -ne $null }
         }
     }
     else{
@@ -437,8 +496,8 @@ try {
             }
         }
         else{
-                foreach($path in $paths){
-                $allUsersAD += Get-ADUser -Filter * -SearchBase $path -Properties * -ErrorAction Stop | where $uniqueValueADandSage[0] -ne $null
+            foreach($path in $paths){
+                $allUsersAD += Get-ADUser -Filter * -SearchBase $path -Properties * -ErrorAction Stop | Where-Object { $_.($uniqueValueADandSage[0]) -ne $null }
             }
         }
     }
@@ -449,7 +508,7 @@ catch {
     WriteToLog $message
     WriteToLog "Script finished"
     SendErrorMail $message
-    break;
+    break
 }
 
 $allUsersADHash = @{}
@@ -462,11 +521,10 @@ foreach($record in $allUsersAD){
 
 $allUsersADClone = $allUsersAD
 if($testUser){
-    $allUsersAD = @($allUsersAD | where $uniqueValueADandSage[0] -eq $testuser)
+    $allUsersAD = @($allUsersAD | Where-Object { $_.($uniqueValueADandSage[0]) -eq $testuser })
     WriteToLog ("AD users filtered to one user - " + $testuser)
 }
 
-#Sage > AD
 WriteToLog "###Updating users in AD###"
 if ($allowUpdate) {
     foreach($adUser in $allUsersAD){
@@ -526,25 +584,26 @@ if ($allowUpdate) {
                 }
 
                 if($aduser.extensionAttribute2 -ne $sageUser.fHCM2__Is_Manager__c){
-                            $changedFieldsIsManager = $true
-                            $changedFieldsIsManagerNew = $sageUser.fHCM2__Is_Manager__c
-                            $changedFields.Add("extensionAttribute2",$changedFieldsIsManagerNew)
-                            $changedFieldsFriendly += [pscustomobject]@{
-                                "Property"="extensionAttribute2"
-                                "Old Value"=$adUser.extensionAttribute2
-                                "New Value"=$changedFieldsIsManagerNew
-                            }
-                        }
+                    $changedFieldsIsManager = $true
+                    $changedFieldsIsManagerNew = $sageUser.fHCM2__Is_Manager__c
+                    $changedFields.Add("extensionAttribute2",$changedFieldsIsManagerNew)
+                    $changedFieldsFriendly += [pscustomobject]@{
+                        "Property"="extensionAttribute2"
+                        "Old Value"=$adUser.extensionAttribute2
+                        "New Value"=$changedFieldsIsManagerNew
+                    }
+                }
+
                 if($aduser.extensionAttribute3 -ne $sageUser.fHCM2__Division__c){
-                            $changedFieldsDivision = $true
-                            $changedFieldsDivisionNew = $sageUser.fHCM2__Division__c
-                            $changedFields.Add("extensionAttribute3",$changedFieldsDivisionNew)
-                            $changedFieldsFriendly += [pscustomobject]@{
-                                "Property"="extensionAttribute3"
-                                "Old Value"=$adUser.extensionAttribute3
-                                "New Value"=$changedFieldsDivisionNew
-                            }
-                        }
+                    $changedFieldsDivision = $true
+                    $changedFieldsDivisionNew = $sageUser.fHCM2__Division__c
+                    $changedFields.Add("extensionAttribute3",$changedFieldsDivisionNew)
+                    $changedFieldsFriendly += [pscustomobject]@{
+                        "Property"="extensionAttribute3"
+                        "Old Value"=$adUser.extensionAttribute3
+                        "New Value"=$changedFieldsDivisionNew
+                    }
+                }
 
                 if($SagefieldToADField.ContainsKey("GivenName")){
                     if($sageUser.fHCM2__First_Name__c -ne $null -and $sageUser.fHCM2__Surname__c -ne $null){
@@ -598,13 +657,13 @@ if ($allowUpdate) {
 
                             if($changedFieldsIsManager -eq $true){
                                 Set-ADUser $adUser -Replace @{ extensionAttribute2 = "$changedFieldsIsManagerNew" } -ErrorAction Stop
-                                }
+                            }
                             if($changedFieldsDivision -eq $true){
                                 Set-ADUser $adUser -Replace @{ extensionAttribute3 = "$changedFieldsDivisionNew" } -ErrorAction Stop
-                                }
+                            }
                             if($changedFieldsCN -eq $true){
                                 Rename-ADObject -Identity $adUser.DistinguishedName -NewName $fullname
-                                }
+                            }
 
                             $message =  "Updated AD user $($aduser.name)`n" + ($changedFieldsFriendly | Out-String)
                             WriteToLog $message
@@ -636,38 +695,27 @@ if ($allowUpdate) {
 if($allowCreation){
     WriteToLog "###Creating users###"
     foreach($key in $allUsersSage.Keys){
+        if($allUsersADHash.ContainsKey($key)){ continue }
 
-        if($allUsersADHash.ContainsKey($key)){continue} # Skip if user already exists
-            if($createUsersWithTheseEmploymentStatuses.Contains($allUsersSage.$key.fHCM2__Employment_Status__c)){
+        if($createUsersWithTheseEmploymentStatuses.Contains($allUsersSage.$key.fHCM2__Employment_Status__c)){
+            $userprops = @{}
 
-            # For Pre-Joiners, only process if their start date is within 7 days from today
-            if($allUsersSage.$key.fHCM2__Employment_Status__c -eq "Pre Joiner"){
-                $startDateRaw = $allUsersSage.$key.fHCM2__Current_Employment__r.fHCM2__Start_Date__c
-                if([string]::IsNullOrEmpty($startDateRaw)){
-                    WriteToLog "Skipping Pre-Joiner $($allUsersSage.$key.fHCM2__First_Name__c) $($allUsersSage.$key.fHCM2__Surname__c) - no start date set."
-                    continue
-                }
-                $startDate = [datetime]::Parse($startDateRaw)
-                $daysUntilStart = ($startDate.Date - (Get-Date).Date).Days
-                if($daysUntilStart -ge 7){
-                    WriteToLog "Skipping Pre-Joiner $($allUsersSage.$key.fHCM2__First_Name__c) $($allUsersSage.$key.fHCM2__Surname__c) - start date $($startDate.ToString('yyyy-MM-dd')) is $daysUntilStart day(s) away (threshold: less than 7 days)."
-                    continue
-                }
-                WriteToLog "Processing Pre-Joiner $($allUsersSage.$key.fHCM2__First_Name__c) $($allUsersSage.$key.fHCM2__Surname__c) - start date $($startDate.ToString('yyyy-MM-dd')) is $daysUntilStart day(s) away."
+            $sageUser = $allUsersSage[$key]
+            $businessName = $sageUser.BusinessName
+            $targetOuPath = EnsureOUExists $businessName $newUserPath
+
+            if(-not $targetOuPath){
+                WriteToLog "Skipping user creation because OU could not be resolved for business '$businessName'."
+                continue
             }
 
-            $userprops = @{}
-            $path = $newUserPath
+            $path = $targetOuPath
             if($path){
 
-
-                # Define the alphabet for the password
                 $alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
-                # Generate a random 20-character string
                 $randomPassword = -join ((1..20) | ForEach-Object { $alphabet[(Get-Random -Maximum $alphabet.Length)] })
                 $securePassword = ConvertTo-SecureString -AsPlainText $randomPassword -Force
 
-                $sageUser = $allUsersSage[$key]
                 $newManager = $null
                 $firstName = $allUsersSage.$key.fHCM2__First_Name__c
                 $surname = $allUsersSage.$key.fHCM2__Surname__c
@@ -711,12 +759,16 @@ if($allowCreation){
                     WriteToLog "Skipping user creation of $($name)"
                     continue
                 }
-                
-                # Dynamic mapping evaluation logic for multi-suffix email domains
-                $sageBusinessName = $allUsersSage.$key.BusinessName
-                $assignedDomain = $domainMappingHash["Default"]
-                if ($sageBusinessName -and $domainMappingHash.ContainsKey($sageBusinessName)) {
-                    $assignedDomain = $domainMappingHash[$sageBusinessName]
+
+                $sageEmail = $allUsersSage[$key].fHCM2__Email__c
+                $assignedDomain = GetEmailDomainFromSageValue $sageEmail
+
+                if (-not $assignedDomain) {
+                    $assignedDomain = $domainMappingHash["Default"]
+                    WriteToLog "Email domain not recognised for $($firstName) $($surname): '$sageEmail'. Falling back to default domain '$assignedDomain'."
+                }
+                else {
+                    WriteToLog "Using email-derived domain '$assignedDomain' for $($firstName) $($surname) from Sage email '$sageEmail'."
                 }
 
                 $UPN = GetAvailableUPN $firstName $userprops.surname $assignedDomain
@@ -738,7 +790,6 @@ if($allowCreation){
                             -Reset `
                             -ErrorAction Stop
 
-                        # Optional: enable after password is set
                         Enable-ADAccount -Identity $sam -ErrorAction Stop
 
                         $userpropsForLog = $userprops.Clone()
@@ -757,7 +808,7 @@ if($allowCreation){
                     $userpropsForLog = $userprops.Clone()
                     $userpropsForLog["GeneratedPassword"] = $randomPassword
                     $usersCreated += $userProps
-                    WriteToLog ("Will create user $($userprops.name)`n" + ($userpropsForLog | out-string))
+                    WriteToLog ("Will create user $($userprops.name)`n" + ($userpropsForLog | Out-String))
                 }
             }
         }
@@ -771,8 +822,7 @@ if($disableUsersWhenLeft){
     WriteToLog "###Disabling accounts###"
     if ($allowDeactivation) {
         foreach($key in $allUsersSage.Keys){
-            # ADD THIS LINE HERE:
-        Write-Host "DEBUG: Processing Key: $key" -ForegroundColor Gray
+            Write-Host "DEBUG: Processing Key: $key" -ForegroundColor Gray
 
             if($allUsersADHash[$key]){
                 if($disableUsersWithTheseEmploymentStatuses.Contains($allUsersSage[$key].fHCM2__Employment_Status__c)){
@@ -845,7 +895,7 @@ if($SyncManagerFromSage){
                     }
                 }
                 if($newManager){
-                    if(!($modifiedUsers.contains($allUsersADHash.$key.SamAccountName))){
+                    if(!($modifiedUsers.Contains($allUsersADHash.$key.SamAccountName))){
                         $modifiedUsers += $allUsersADHash.$key.SamAccountName
                     }
                     if($diag){
@@ -878,7 +928,7 @@ Function UpdateWorkEmailInSage($userId, $emailValue, $fedIdValue){
 
     try {
         $headers = @{
-            Authorization  = "$($session.token_type) $($session.access_token)";
+            Authorization  = "$($session.token_type) $($session.access_token)"
             "Content-Type" = "application/json"
         }
         Invoke-RestMethod ($salesforceUrl + $url) -Headers $headers -Body $body -Method Patch -ErrorAction Stop
